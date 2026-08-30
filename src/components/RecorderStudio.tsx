@@ -86,7 +86,7 @@ export const RecorderStudio: React.FC<RecorderStudioProps> = ({
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
 
   const [audioConfig, setAudioConfig] = useState<AudioConfig>({
-    micEnabled: false,
+    micEnabled: true,
     micDeviceId: '',
     micVolume: 1.0,
     echoCancellation: true,
@@ -118,6 +118,10 @@ export const RecorderStudio: React.FC<RecorderStudioProps> = ({
   const [recordedDuration, setRecordedDuration] = useState<number>(0);
   const [activeSourceLabel, setActiveSourceLabel] = useState<string>('Toàn màn hình');
   const [showLivePreview, setShowLivePreview] = useState<boolean>(false);
+  // 'monitor' | 'window' | 'browser' (tab) - lấy từ MediaStreamTrack.getSettings().displaySurface
+  // Khi = 'browser', rất dễ người dùng lỡ chọn đúng tab đang chạy app này => xem trực tiếp
+  // sẽ tạo lặp gương vô tận, nên phải tắt hẳn tính năng xem trực tiếp trong trường hợp này.
+  const [captureSurfaceType, setCaptureSurfaceType] = useState<string | null>(null);
 
   const livePreviewVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -207,6 +211,15 @@ export const RecorderStudio: React.FC<RecorderStudioProps> = ({
       // Handle user stopping screen share from browser banner
       const videoTrack = composer.displayStream.getVideoTracks()[0];
       if (videoTrack) {
+        // Phát hiện loại nguồn thực tế người dùng vừa chọn trong hộp thoại của Chrome.
+        // 'browser' nghĩa là họ chọn chia sẻ 1 Tab - nếu đó là tab đang chạy app này,
+        // bật xem trực tiếp chắc chắn sẽ gây lặp gương vô tận.
+        const settings = videoTrack.getSettings() as MediaTrackSettings & { displaySurface?: string };
+        setCaptureSurfaceType(settings.displaySurface ?? null);
+        if (settings.displaySurface === 'browser') {
+          setShowLivePreview(false);
+        }
+
         videoTrack.onended = () => {
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             stopRecording();
@@ -380,6 +393,8 @@ export const RecorderStudio: React.FC<RecorderStudioProps> = ({
     setElapsedSeconds(0);
     setStatus('idle');
     setErrorMessage(null);
+    setShowLivePreview(false);
+    setCaptureSurfaceType(null);
   };
 
   return (
@@ -514,15 +529,21 @@ export const RecorderStudio: React.FC<RecorderStudioProps> = ({
                     </p>
                   </div>
 
-                  {/* Toggle Preview Button */}
+                  {/* Toggle Preview Button - disabled entirely for Tab-capture to prevent infinity mirror */}
                   <div className="pt-1 flex items-center justify-center">
-                    <button
-                      onClick={() => setShowLivePreview(true)}
-                      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-xs font-medium transition-all cursor-pointer"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Bật xem trực tiếp màn hình (Có thể gây lặp nếu ở tab này)</span>
-                    </button>
+                    {captureSurfaceType === 'browser' ? (
+                      <p className="text-[11px] sm:text-xs text-amber-300 bg-amber-950/40 border border-amber-700/60 rounded-xl px-3.5 py-2 max-w-md">
+                        ⚠️ Bạn đang quay theo chế độ <strong>Tab trình duyệt</strong>. Nếu đó là tab ứng dụng này, xem trực tiếp sẽ luôn bị lặp gương vô tận nên tính năng này đã được <strong>tự động tắt</strong> để bảo vệ bạn. Video quay ra vẫn hoàn toàn bình thường.
+                      </p>
+                    ) : (
+                      <button
+                        onClick={() => setShowLivePreview(true)}
+                        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white text-xs font-medium transition-all cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Bật xem trực tiếp màn hình</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
