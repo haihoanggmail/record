@@ -86,7 +86,7 @@ export const RecorderStudio: React.FC<RecorderStudioProps> = ({
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
 
   const [audioConfig, setAudioConfig] = useState<AudioConfig>({
-    micEnabled: false,
+    micEnabled: true,
     micDeviceId: '',
     micVolume: 1.0,
     echoCancellation: true,
