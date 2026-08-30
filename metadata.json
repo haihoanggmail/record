@@ -1,0 +1,12 @@
+{
+  "name": "Record - Hachihi",
+  "description": "Ứng dụng quay video màn hình gọn nhẹ, thu âm thanh micro và hệ thống, tự động lưu vào máy tính - Đơn vị hachihi.vn - Hỗ trợ: Hải Hoàng 09-1800-1944",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
