@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Video,
   Film,
@@ -9,8 +9,10 @@ import {
   Phone,
   CheckCircle2,
   AlertCircle,
+  MessageSquareWarning,
 } from 'lucide-react';
 import { RecordingStatus, AppTheme, DefaultDirectoryInfo } from '../types';
+import { getAskBeforeSave, setAskBeforeSave } from '../lib/appSettings';
 
 interface HeaderProps {
   status: RecordingStatus;
@@ -36,6 +38,18 @@ export const Header: React.FC<HeaderProps> = ({
   onClearDefaultDirectory,
 }) => {
   const isLight = theme === 'light';
+
+  const [askBeforeSave, setAskBeforeSaveState] = useState<boolean>(false);
+
+  useEffect(() => {
+    setAskBeforeSaveState(getAskBeforeSave());
+  }, []);
+
+  const handleToggleAskBeforeSave = () => {
+    const next = !askBeforeSave;
+    setAskBeforeSaveState(next);
+    setAskBeforeSave(next);
+  };
 
   return (
     <header
@@ -146,6 +160,26 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
           </div>
+
+          {/* Ask-before-save toggle - đặt cạnh thư mục tự lưu cho liền mạch về mặt chức năng */}
+          <label
+            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border cursor-pointer transition-all select-none ${
+              isLight
+                ? 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
+            }`}
+            title="Khi bật: mỗi lần bấm Lưu sẽ luôn mở hộp thoại để bạn chọn lại nơi lưu, tên tệp (bỏ qua thư mục mặc định)"
+          >
+            <input
+              id="checkbox-ask-before-save"
+              type="checkbox"
+              checked={askBeforeSave}
+              onChange={handleToggleAskBeforeSave}
+              className="w-3.5 h-3.5 rounded text-sky-600 focus:ring-sky-500 cursor-pointer"
+            />
+            <MessageSquareWarning className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+            <span className="whitespace-nowrap">Hỏi lại nơi lưu</span>
+          </label>
 
           {/* Guide Modal Trigger */}
           <button

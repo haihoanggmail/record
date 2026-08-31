@@ -17,6 +17,7 @@ import {
 import { StoredRecording } from '../types';
 import { formatBytes, formatDuration, formatDateTime, saveVideoToFile } from '../lib/fileSaver';
 import { trimVideoBlob } from '../lib/videoTrimmer';
+import { resolveSaveDirectoryHandle } from '../lib/appSettings';
 import { TrimRangeSlider } from './TrimRangeSlider';
 
 interface RecordingsLibraryModalProps {
@@ -63,11 +64,14 @@ export const RecordingsLibraryModal: React.FC<RecordingsLibraryModalProps> = ({
   const handlePlayVideo = (rec: StoredRecording) => {
     const url = URL.createObjectURL(rec.blob);
     setActivePlayback({ url, name: rec.name, blob: rec.blob });
-    // Reset trạng thái cắt mỗi khi mở 1 video khác để tránh giữ vùng cắt của video trước
+    // Reset trạng thái cắt mỗi khi mở 1 video khác để tránh giữ vùng cắt của video trước.
+    // Dùng ngay rec.duration (thời lượng đã lưu lúc quay) làm giá trị ban đầu thay vì đợi
+    // video.duration từ thẻ <video>, vì webm do MediaRecorder tạo ra thường trả về
+    // Infinity cho duration cho tới khi được "ép" tính lại (xem handlePlaybackLoadedMetadata).
     setIsTrimMode(false);
-    setPlaybackDuration(0);
+    setPlaybackDuration(rec.duration || 0);
     setTrimStart(0);
-    setTrimEnd(0);
+    setTrimEnd(rec.duration || 0);
     setTrimStatus(null);
   };
 
@@ -78,18 +82,34 @@ export const RecordingsLibraryModal: React.FC<RecordingsLibraryModalProps> = ({
   };
 
   const handlePlaybackLoadedMetadata = () => {
-    if (playbackVideoRef.current) {
-      const dur = playbackVideoRef.current.duration;
-      if (dur && isFinite(dur)) {
-        setPlaybackDuration(dur);
-        setTrimEnd(dur);
-      }
+    const v = playbackVideoRef.current;
+    if (!v) return;
+
+    if (v.duration && isFinite(v.duration)) {
+      setPlaybackDuration(v.duration);
+      setTrimEnd(v.duration);
+      return;
     }
+
+    // Thủ thuật xử lý lỗi duration = Infinity của webm: ép trình duyệt seek tới cuối
+    // để tính lại đúng thời lượng thật, sau đó trả playhead về đầu.
+    const onTimeUpdate = () => {
+      v.removeEventListener('timeupdate', onTimeUpdate);
+      const fixedDuration = isFinite(v.duration) ? v.duration : playbackDuration;
+      if (fixedDuration > 0) {
+        setPlaybackDuration(fixedDuration);
+        setTrimEnd(fixedDuration);
+      }
+      v.currentTime = 0;
+    };
+    v.addEventListener('timeupdate', onTimeUpdate);
+    v.currentTime = Number.MAX_SAFE_INTEGER;
   };
 
   const handleDownloadToPc = async (rec: StoredRecording) => {
     try {
-      await saveVideoToFile(rec.blob, rec.name, rec.blob.type.includes('mp4') ? 'mp4' : 'webm');
+      const dirHandle = await resolveSaveDirectoryHandle();
+      await saveVideoToFile(rec.blob, rec.name, rec.blob.type.includes('mp4') ? 'mp4' : 'webm', dirHandle);
     } catch (err) {
       console.warn('Save failed:', err);
     }
@@ -115,7 +135,8 @@ export const RecordingsLibraryModal: React.FC<RecordingsLibraryModalProps> = ({
       await saveVideoToFile(
         trimmedBlob,
         `${activePlayback.name}_cat`,
-        trimmedBlob.type.includes('mp4') ? 'mp4' : 'webm'
+        trimmedBlob.type.includes('mp4') ? 'mp4' : 'webm',
+        await resolveSaveDirectoryHandle()
       );
       setTrimStatus('✅ Đã cắt và lưu đoạn video về máy tính!');
       setTimeout(() => setTrimStatus(null), 4000);

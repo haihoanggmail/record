@@ -26,6 +26,7 @@ import {
   saveFileToDirectoryHandle,
 } from '../lib/fileSaver';
 import { getDefaultDirectoryHandle } from '../lib/indexedDb';
+import { resolveSaveDirectoryHandle, getAskBeforeSave } from '../lib/appSettings';
 import { trimVideoBlob } from '../lib/videoTrimmer';
 import { TrimRangeSlider } from './TrimRangeSlider';
 
@@ -74,7 +75,10 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
     setVideoUrl(url);
 
     // Auto-save check: if user configured a default directory, attempt saving automatically!
+    // Bỏ qua hoàn toàn nếu người dùng đã bật "Hỏi lại nơi lưu" - lúc đó họ muốn tự chọn
+    // nơi lưu/tên file mỗi lần, không muốn app tự lưu ngầm.
     const tryAutoSave = async () => {
+      if (getAskBeforeSave()) return;
       try {
         const dirInfo = await getDefaultDirectoryHandle();
         if (dirInfo && dirInfo.handle) {
@@ -99,13 +103,27 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
   }, [blob]);
 
   const handleLoadedMetadata = () => {
-    if (videoRef.current) {
-      const dur = videoRef.current.duration;
-      if (dur && isFinite(dur)) {
-        setVideoDuration(dur);
-        setTrimEnd(dur);
-      }
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (v.duration && isFinite(v.duration)) {
+      setVideoDuration(v.duration);
+      setTrimEnd(v.duration);
+      return;
     }
+
+    // Webm do MediaRecorder tạo có thể báo duration = Infinity; ép seek để tính lại.
+    const onTimeUpdate = () => {
+      v.removeEventListener('timeupdate', onTimeUpdate);
+      const fixedDuration = isFinite(v.duration) ? v.duration : (duration || videoDuration);
+      if (fixedDuration > 0) {
+        setVideoDuration(fixedDuration);
+        setTrimEnd(fixedDuration);
+      }
+      v.currentTime = 0;
+    };
+    v.addEventListener('timeupdate', onTimeUpdate);
+    v.currentTime = Number.MAX_SAFE_INTEGER;
   };
 
   const handleTimeUpdate = () => {
@@ -166,12 +184,14 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
     try {
       const blobToSave = await getBlobToSave();
       setSavingStatus('Đang mở hộp thoại lưu tệp...');
-      const dirInfo = await getDefaultDirectoryHandle();
+      // Nếu người dùng bật "Hỏi lại nơi lưu" -> dirHandle sẽ luôn là undefined,
+      // ép saveVideoToFile phải mở hộp thoại Save As để chọn lại nơi lưu / tên tệp.
+      const dirHandle = await resolveSaveDirectoryHandle();
       const res = await saveVideoToFile(
         blobToSave,
         fileName,
         blobToSave.type.includes('mp4') ? 'mp4' : 'webm',
-        dirInfo?.handle
+        dirHandle
       );
       if (res.method === 'directory') {
         setSavingStatus(`✅ Đã lưu trực tiếp vào thư mục: ${res.folderName || 'mặc định'}/${res.fileName}`);
