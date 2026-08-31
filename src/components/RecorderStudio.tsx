@@ -367,15 +367,18 @@ export const RecorderStudio: React.FC<RecorderStudioProps> = ({
   };
 
   // Save to IndexedDB Library
-  const handleSaveToLibrary = async (name: string) => {
-    if (!recordedBlob) return;
+  // blobOverride: khi người dùng đã cắt video trong VideoPlayerPreview, blob đã cắt
+  // được truyền vào đây để lưu đúng đoạn đã chọn thay vì luôn lưu bản ghi gốc.
+  const handleSaveToLibrary = async (name: string, blobOverride?: Blob, durationOverride?: number) => {
+    const finalBlob = blobOverride || recordedBlob;
+    if (!finalBlob) return;
     const item: StoredRecording = {
       id: `rec_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
       name,
-      blob: recordedBlob,
-      mimeType: recordedBlob.type || 'video/webm',
-      duration: recordedDuration,
-      size: recordedBlob.size,
+      blob: finalBlob,
+      mimeType: finalBlob.type || 'video/webm',
+      duration: durationOverride ?? recordedDuration,
+      size: finalBlob.size,
       createdAt: Date.now(),
       width: 1920,
       height: 1080,

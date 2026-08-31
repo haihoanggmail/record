@@ -26,13 +26,14 @@ import {
   saveFileToDirectoryHandle,
 } from '../lib/fileSaver';
 import { getDefaultDirectoryHandle } from '../lib/indexedDb';
+import { trimVideoBlob } from '../lib/videoTrimmer';
 
 interface VideoPlayerPreviewProps {
   blob: Blob;
   duration: number; // in seconds
   sourceLabel?: string;
   onRecordAgain: () => void;
-  onSaveToLibrary: (name: string) => Promise<void>;
+  onSaveToLibrary: (name: string, blobOverride?: Blob, durationOverride?: number) => Promise<void>;
 }
 
 export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
@@ -53,6 +54,8 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
   const [isSavedInLibrary, setIsSavedInLibrary] = useState<boolean>(false);
   const [snapshotFeedback, setSnapshotFeedback] = useState<boolean>(false);
   const [isExtractingAudio, setIsExtractingAudio] = useState<boolean>(false);
+  const [isTrimming, setIsTrimming] = useState<boolean>(false);
+  const [trimProgress, setTrimProgress] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [videoDuration, setVideoDuration] = useState<number>(duration || 0);
@@ -62,8 +65,6 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
   const [isTrimMode, setIsTrimMode] = useState<boolean>(false);
   const [trimStart, setTrimStart] = useState<number>(0);
   const [trimEnd, setTrimEnd] = useState<number>(duration || 10);
-  const [draggingHandle, setDraggingHandle] = useState<'start' | 'end' | null>(null);
-  const trimTrackRef = useRef<HTMLDivElement>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -139,57 +140,36 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
     }
   };
 
-  // --- Dual-handle trim slider (fully custom, pointer-based) ---
-  // We deliberately don't rely on native <input type="range"> here: browsers
-  // (and some in-app webviews) paint their own "filled" track behind the
-  // thumb that can't be reliably hidden with CSS, which made two overlapping
-  // sliders look like separate, confusing bars. Drawing the track and the
-  // two round handles ourselves gives full control over the look everywhere.
-  const timeFromClientX = (clientX: number) => {
-    const track = trimTrackRef.current;
-    if (!track || !videoDuration) return 0;
-    const rect = track.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    return ratio * videoDuration;
+  // Trả về blob đã cắt nếu người dùng đang bật "Cắt video" và có chọn vùng khác toàn bộ,
+  // ngược lại trả về blob gốc. Đây là bước bị THIẾU trước đây khiến file lưu ra luôn là bản gốc.
+  const getBlobToSave = async (): Promise<Blob> => {
+    const isRealTrim = isTrimMode && (trimStart > 0.05 || trimEnd < videoDuration - 0.05);
+    if (!isRealTrim) return blob;
+
+    setIsTrimming(true);
+    setTrimProgress(0);
+    setSavingStatus('✂️ Đang cắt video, vui lòng đợi...');
+    try {
+      const trimmed = await trimVideoBlob(blob, trimStart, trimEnd, blob.type, (p) => {
+        setTrimProgress(p);
+        setSavingStatus(`✂️ Đang cắt video... ${p}%`);
+      });
+      return trimmed;
+    } finally {
+      setIsTrimming(false);
+    }
   };
-
-  useEffect(() => {
-    if (!draggingHandle) return;
-
-    const handlePointerMove = (e: PointerEvent) => {
-      const time = timeFromClientX(e.clientX);
-      if (draggingHandle === 'start') {
-        const val = Math.max(0, Math.min(time, trimEnd - 0.2));
-        setTrimStart(val);
-        if (videoRef.current) videoRef.current.currentTime = val;
-      } else {
-        const val = Math.min(videoDuration, Math.max(time, trimStart + 0.2));
-        setTrimEnd(val);
-        if (videoRef.current) videoRef.current.currentTime = val;
-      }
-    };
-    const stopDragging = () => setDraggingHandle(null);
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', stopDragging);
-    window.addEventListener('pointercancel', stopDragging);
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', stopDragging);
-      window.removeEventListener('pointercancel', stopDragging);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draggingHandle, trimStart, trimEnd, videoDuration]);
 
   // Save to computer with folder selection dialog or default dir
   const handleSaveToComputer = async () => {
     try {
+      const blobToSave = await getBlobToSave();
       setSavingStatus('Đang mở hộp thoại lưu tệp...');
       const dirInfo = await getDefaultDirectoryHandle();
       const res = await saveVideoToFile(
-        blob,
+        blobToSave,
         fileName,
-        blob.type.includes('mp4') ? 'mp4' : 'webm',
+        blobToSave.type.includes('mp4') ? 'mp4' : 'webm',
         dirInfo?.handle
       );
       if (res.method === 'directory') {
@@ -239,10 +219,16 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
   // Save to browser IndexedDB Library
   const handleSaveToLibraryClick = async () => {
     try {
-      await onSaveToLibrary(fileName);
+      const isRealTrim = isTrimMode && (trimStart > 0.05 || trimEnd < videoDuration - 0.05);
+      const blobToSave = await getBlobToSave();
+      const durationToSave = isRealTrim ? trimEnd - trimStart : videoDuration;
+      await onSaveToLibrary(fileName, blobToSave, durationToSave);
       setIsSavedInLibrary(true);
+      setSavingStatus(null);
     } catch (err) {
       console.error('Save to library error:', err);
+      setSavingStatus('❌ Không thể cắt/lưu video. Vui lòng thử lại.');
+      setTimeout(() => setSavingStatus(null), 4000);
     }
   };
 
@@ -267,10 +253,15 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
         <button
           id="btn-preview-save-primary"
           onClick={handleSaveToComputer}
-          className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shadow-sky-600/30 transition-all cursor-pointer"
+          disabled={isTrimming}
+          className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shadow-sky-600/30 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          <HardDrive className="w-4 h-4" />
-          <span>Lưu vào máy tính (Save As...)</span>
+          {isTrimming ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <HardDrive className="w-4 h-4" />
+          )}
+          <span>{isTrimming ? `Đang cắt video... ${trimProgress}%` : 'Lưu vào máy tính (Save As...)'}</span>
         </button>
       </div>
 
@@ -429,74 +420,52 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
 
           {/* Trimmer Slider Bar if enabled */}
           {isTrimMode && (
-            <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3 animate-in fade-in">
+            <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2 animate-in fade-in">
               <div className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-300">
                 <span className="font-semibold flex items-center gap-1.5">
                   <Scissors className="w-3.5 h-3.5 text-sky-600" />
-                  Kéo 2 chấm tròn để chọn đoạn cần giữ lại:
+                  Cắt đoạn video để xem lại:
                 </span>
                 <span className="text-slate-500 dark:text-slate-400 font-mono">
                   {formatDuration(trimStart)} - {formatDuration(trimEnd)} (Thời lượng: {formatDuration(trimEnd - trimStart)})
                 </span>
               </div>
-
-              {/* Single track, two round handles: the selected segment is
-                  highlighted in blue, everything outside it stays gray/white.
-                  Built with plain divs + pointer events (not native <input
-                  type="range">) so the look is 100% consistent everywhere. */}
-              <div className="px-1 pt-1 pb-2">
-                <div
-                  ref={trimTrackRef}
-                  className="relative h-6 flex items-center touch-none select-none cursor-pointer"
-                >
-                  {/* Base track (unselected area) */}
-                  <div className="absolute left-0 right-0 h-2 rounded-full bg-slate-200 dark:bg-slate-700 pointer-events-none" />
-                  {/* Selected segment highlight */}
-                  <div
-                    className="absolute h-2 rounded-full bg-sky-600 pointer-events-none"
-                    style={{
-                      left: `${(trimStart / (videoDuration || 1)) * 100}%`,
-                      width: `${((trimEnd - trimStart) / (videoDuration || 1)) * 100}%`,
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Điểm bắt đầu:</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max={videoDuration}
+                    step="0.5"
+                    value={trimStart}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      if (val < trimEnd) {
+                        setTrimStart(val);
+                        if (videoRef.current) videoRef.current.currentTime = val;
+                      }
                     }}
-                  />
-                  {/* Start handle */}
-                  <div
-                    role="slider"
-                    aria-label="Điểm bắt đầu đoạn cắt"
-                    aria-valuenow={trimStart}
-                    aria-valuemin={0}
-                    aria-valuemax={videoDuration}
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      setDraggingHandle('start');
-                    }}
-                    className="absolute w-5 h-5 -translate-x-1/2 rounded-full bg-white dark:bg-slate-900 border-[3px] border-sky-600 shadow-md cursor-grab active:cursor-grabbing touch-none"
-                    style={{
-                      left: `${(trimStart / (videoDuration || 1)) * 100}%`,
-                      zIndex: draggingHandle === 'start' ? 20 : 10,
-                    }}
-                  />
-                  {/* End handle */}
-                  <div
-                    role="slider"
-                    aria-label="Điểm kết thúc đoạn cắt"
-                    aria-valuenow={trimEnd}
-                    aria-valuemin={0}
-                    aria-valuemax={videoDuration}
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      setDraggingHandle('end');
-                    }}
-                    className="absolute w-5 h-5 -translate-x-1/2 rounded-full bg-white dark:bg-slate-900 border-[3px] border-sky-600 shadow-md cursor-grab active:cursor-grabbing touch-none"
-                    style={{
-                      left: `${(trimEnd / (videoDuration || 1)) * 100}%`,
-                      zIndex: draggingHandle === 'end' ? 20 : 11,
-                    }}
+                    className="w-full accent-sky-600"
                   />
                 </div>
-                <div className="flex justify-between text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-1.5">
-                  <span>0:00</span>
-                  <span>{formatDuration(videoDuration)}</span>
+                <div>
+                  <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Điểm kết thúc:</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max={videoDuration}
+                    step="0.5"
+                    value={trimEnd}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      if (val > trimStart) {
+                        setTrimEnd(val);
+                        if (videoRef.current) videoRef.current.currentTime = val;
+                      }
+                    }}
+                    className="w-full accent-sky-600"
+                  />
                 </div>
               </div>
             </div>
@@ -523,7 +492,7 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
         <button
           id="btn-save-to-library"
           onClick={handleSaveToLibraryClick}
-          disabled={isSavedInLibrary}
+          disabled={isSavedInLibrary || isTrimming}
           className={`p-3.5 rounded-xl border font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
             isSavedInLibrary
               ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'

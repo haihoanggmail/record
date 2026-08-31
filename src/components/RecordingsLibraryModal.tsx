@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   X,
   Film,
@@ -11,9 +11,12 @@ import {
   Calendar,
   Clock,
   FileVideo,
+  Scissors,
+  Loader2,
 } from 'lucide-react';
 import { StoredRecording } from '../types';
 import { formatBytes, formatDuration, formatDateTime, saveVideoToFile } from '../lib/fileSaver';
+import { trimVideoBlob } from '../lib/videoTrimmer';
 
 interface RecordingsLibraryModalProps {
   recordings: StoredRecording[];
@@ -30,9 +33,19 @@ export const RecordingsLibraryModal: React.FC<RecordingsLibraryModalProps> = ({
   onRename,
   onClearAll,
 }) => {
-  const [activePlayback, setActivePlayback] = useState<{ url: string; name: string } | null>(null);
+  const [activePlayback, setActivePlayback] = useState<{ url: string; name: string; blob: Blob } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
+
+  // --- Trim video khi xem lại trong thư viện ---
+  const playbackVideoRef = useRef<HTMLVideoElement>(null);
+  const [isTrimMode, setIsTrimMode] = useState<boolean>(false);
+  const [playbackDuration, setPlaybackDuration] = useState<number>(0);
+  const [trimStart, setTrimStart] = useState<number>(0);
+  const [trimEnd, setTrimEnd] = useState<number>(0);
+  const [isTrimming, setIsTrimming] = useState<boolean>(false);
+  const [trimProgress, setTrimProgress] = useState<number>(0);
+  const [trimStatus, setTrimStatus] = useState<string | null>(null);
 
   const handleStartRename = (rec: StoredRecording) => {
     setEditingId(rec.id);
@@ -48,7 +61,29 @@ export const RecordingsLibraryModal: React.FC<RecordingsLibraryModalProps> = ({
 
   const handlePlayVideo = (rec: StoredRecording) => {
     const url = URL.createObjectURL(rec.blob);
-    setActivePlayback({ url, name: rec.name });
+    setActivePlayback({ url, name: rec.name, blob: rec.blob });
+    // Reset trạng thái cắt mỗi khi mở 1 video khác để tránh giữ vùng cắt của video trước
+    setIsTrimMode(false);
+    setPlaybackDuration(0);
+    setTrimStart(0);
+    setTrimEnd(0);
+    setTrimStatus(null);
+  };
+
+  const handleClosePlayback = () => {
+    if (activePlayback) URL.revokeObjectURL(activePlayback.url);
+    setActivePlayback(null);
+    setIsTrimMode(false);
+  };
+
+  const handlePlaybackLoadedMetadata = () => {
+    if (playbackVideoRef.current) {
+      const dur = playbackVideoRef.current.duration;
+      if (dur && isFinite(dur)) {
+        setPlaybackDuration(dur);
+        setTrimEnd(dur);
+      }
+    }
   };
 
   const handleDownloadToPc = async (rec: StoredRecording) => {
@@ -56,6 +91,39 @@ export const RecordingsLibraryModal: React.FC<RecordingsLibraryModalProps> = ({
       await saveVideoToFile(rec.blob, rec.name, rec.blob.type.includes('mp4') ? 'mp4' : 'webm');
     } catch (err) {
       console.warn('Save failed:', err);
+    }
+  };
+
+  // Cắt đoạn [trimStart, trimEnd] của video đang xem lại rồi tải về máy tính.
+  const handleTrimAndDownload = async () => {
+    if (!activePlayback) return;
+    setIsTrimming(true);
+    setTrimProgress(0);
+    setTrimStatus('✂️ Đang cắt video, vui lòng đợi...');
+    try {
+      const trimmedBlob = await trimVideoBlob(
+        activePlayback.blob,
+        trimStart,
+        trimEnd,
+        activePlayback.blob.type,
+        (p) => {
+          setTrimProgress(p);
+          setTrimStatus(`✂️ Đang cắt video... ${p}%`);
+        }
+      );
+      await saveVideoToFile(
+        trimmedBlob,
+        `${activePlayback.name}_cat`,
+        trimmedBlob.type.includes('mp4') ? 'mp4' : 'webm'
+      );
+      setTrimStatus('✅ Đã cắt và lưu đoạn video về máy tính!');
+      setTimeout(() => setTrimStatus(null), 4000);
+    } catch (err: any) {
+      console.error('Trim from library failed:', err);
+      setTrimStatus(`❌ Lỗi khi cắt video: ${err?.message || 'Không xác định'}`);
+      setTimeout(() => setTrimStatus(null), 4000);
+    } finally {
+      setIsTrimming(false);
     }
   };
 
@@ -105,19 +173,107 @@ export const RecordingsLibraryModal: React.FC<RecordingsLibraryModalProps> = ({
               <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
                 Đang xem: {activePlayback.name}
               </span>
-              <button
-                onClick={() => setActivePlayback(null)}
-                className="text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white px-2.5 py-1 rounded bg-slate-200 dark:bg-slate-800 cursor-pointer"
-              >
-                Đóng phát
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setIsTrimMode((v) => !v)}
+                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors cursor-pointer ${
+                    isTrimMode
+                      ? 'bg-sky-600 text-white'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  <Scissors className="w-3.5 h-3.5" />
+                  <span>Cắt video</span>
+                </button>
+                <button
+                  onClick={handleClosePlayback}
+                  className="text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white px-2.5 py-1 rounded bg-slate-200 dark:bg-slate-800 cursor-pointer"
+                >
+                  Đóng phát
+                </button>
+              </div>
             </div>
+
             <video
+              ref={playbackVideoRef}
               src={activePlayback.url}
               controls
               autoPlay
+              onLoadedMetadata={handlePlaybackLoadedMetadata}
               className="w-full max-h-[360px] bg-black rounded-lg object-contain"
             />
+
+            {/* Trimmer UI */}
+            {isTrimMode && playbackDuration > 0 && (
+              <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2 animate-in fade-in">
+                <div className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-300">
+                  <span className="font-semibold flex items-center gap-1.5">
+                    <Scissors className="w-3.5 h-3.5 text-sky-600" />
+                    Chọn đoạn cần cắt:
+                  </span>
+                  <span className="text-slate-500 dark:text-slate-400 font-mono">
+                    {formatDuration(trimStart)} - {formatDuration(trimEnd)} (Thời lượng: {formatDuration(trimEnd - trimStart)})
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Điểm bắt đầu:</label>
+                    <input
+                      type="range"
+                      min="0"
+                      max={playbackDuration}
+                      step="0.5"
+                      value={trimStart}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if (val < trimEnd) {
+                          setTrimStart(val);
+                          if (playbackVideoRef.current) playbackVideoRef.current.currentTime = val;
+                        }
+                      }}
+                      className="w-full accent-sky-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Điểm kết thúc:</label>
+                    <input
+                      type="range"
+                      min="0"
+                      max={playbackDuration}
+                      step="0.5"
+                      value={trimEnd}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if (val > trimStart) {
+                          setTrimEnd(val);
+                          if (playbackVideoRef.current) playbackVideoRef.current.currentTime = val;
+                        }
+                      }}
+                      className="w-full accent-sky-600"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleTrimAndDownload}
+                  disabled={isTrimming}
+                  className="w-full flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-bold transition-colors cursor-pointer"
+                >
+                  {isTrimming ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Scissors className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isTrimming ? `Đang cắt... ${trimProgress}%` : 'Cắt & Tải đoạn này về máy'}</span>
+                </button>
+
+                {trimStatus && (
+                  <div className="text-[11px] text-center font-semibold text-sky-700 dark:text-sky-300">
+                    {trimStatus}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
