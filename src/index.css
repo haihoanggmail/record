@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Bật Dark Mode theo class .dark trên thẻ <html> (App.tsx đã tự thêm/xóa class này
+   khi bấm nút chuyển Sáng/Tối). Từ Tailwind v4, nếu KHÔNG có dòng này, mọi class
+   "dark:..." sẽ mặc định chạy theo cài đặt hệ điều hành (prefers-color-scheme),
+   hoàn toàn bỏ qua nút bấm trong app - đây chính là nguyên nhân trước đó chỉ có
+   Header.tsx đổi được (vì Header tự viết class tay, không dùng "dark:" của Tailwind). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   body {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
