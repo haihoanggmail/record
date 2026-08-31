@@ -137,6 +137,8 @@ export async function createRecordingStreams(
       ...(videoConfig.resolution !== 'original' ? { width: { ideal: idealWidth }, height: { ideal: idealHeight } } : {}),
       // @ts-ignore
       cursor: 'always',
+	   selfBrowserSurface: 'exclude',
+	  
     },
     audio: audioConfig.systemAudioEnabled,
   };
