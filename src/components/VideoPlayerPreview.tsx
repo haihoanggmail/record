@@ -27,6 +27,7 @@ import {
 } from '../lib/fileSaver';
 import { getDefaultDirectoryHandle } from '../lib/indexedDb';
 import { trimVideoBlob } from '../lib/videoTrimmer';
+import { TrimRangeSlider } from './TrimRangeSlider';
 
 interface VideoPlayerPreviewProps {
   blob: Blob;
@@ -420,54 +421,24 @@ export const VideoPlayerPreview: React.FC<VideoPlayerPreviewProps> = ({
 
           {/* Trimmer Slider Bar if enabled */}
           {isTrimMode && (
-            <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2 animate-in fade-in">
-              <div className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-300">
-                <span className="font-semibold flex items-center gap-1.5">
-                  <Scissors className="w-3.5 h-3.5 text-sky-600" />
-                  Cắt đoạn video để xem lại:
-                </span>
-                <span className="text-slate-500 dark:text-slate-400 font-mono">
-                  {formatDuration(trimStart)} - {formatDuration(trimEnd)} (Thời lượng: {formatDuration(trimEnd - trimStart)})
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Điểm bắt đầu:</label>
-                  <input
-                    type="range"
-                    min="0"
-                    max={videoDuration}
-                    step="0.5"
-                    value={trimStart}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      if (val < trimEnd) {
-                        setTrimStart(val);
-                        if (videoRef.current) videoRef.current.currentTime = val;
-                      }
-                    }}
-                    className="w-full accent-sky-600"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Điểm kết thúc:</label>
-                  <input
-                    type="range"
-                    min="0"
-                    max={videoDuration}
-                    step="0.5"
-                    value={trimEnd}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      if (val > trimStart) {
-                        setTrimEnd(val);
-                        if (videoRef.current) videoRef.current.currentTime = val;
-                      }
-                    }}
-                    className="w-full accent-sky-600"
-                  />
-                </div>
-              </div>
+            <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2.5 animate-in fade-in">
+              <span className="text-xs font-semibold flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                <Scissors className="w-3.5 h-3.5 text-sky-600" />
+                Kéo 2 đầu để chọn đoạn cần cắt:
+              </span>
+              <TrimRangeSlider
+                duration={videoDuration}
+                trimStart={trimStart}
+                trimEnd={trimEnd}
+                onStartChange={(val) => {
+                  setTrimStart(val);
+                  if (videoRef.current) videoRef.current.currentTime = val;
+                }}
+                onEndChange={(val) => {
+                  setTrimEnd(val);
+                  if (videoRef.current) videoRef.current.currentTime = val;
+                }}
+              />
             </div>
           )}
         </div>
